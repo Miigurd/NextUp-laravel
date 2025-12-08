@@ -7,61 +7,97 @@ use App\Models\Cart;
 use App\Models\Order;
 use App\Models\OrderItem;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
 class OrderController extends Controller
 {
     /**
-     * Display a listing of the resource.
+     * Display all orders for all users.
      */
-    public function index()
+    public function allOrders()
     {
-        return Order::with('orderItems.product')->where('user_id', Auth::id())->get();
+        // Include the user relationship
+        return Order::with(['orderItems.product', 'user'])->get();
     }
 
     /**
-     * Store a newly created resource in storage.
+     * Display all orders for a user.
+     */
+    public function index(Request $request)
+    {
+        $request->validate([
+            'user_id' => 'required|exists:users,id'
+        ]);
+
+        return Order::with('orderItems.product')
+            ->where('user_id', $request->user_id)
+            ->get();
+    }
+
+    /**
+     * Create an Order from the Cart.
      */
     public function store(Request $request)
     {
-        $cartItems = Cart::with('product')->where('user_id', Auth::id())->get();
+        $request->validate([
+            'user_id' => 'required|exists:users,id'
+        ]);
 
-        if ($cartItems->isEmpty()) {
+        $userId = $request->user_id;
+
+        // Fetch user's cart with items + products
+        $cart = Cart::with('items.product')
+            ->where('user_id', $userId)
+            ->first();
+
+        if (!$cart || $cart->items->isEmpty()) {
             return response()->json(['message' => 'Cart is empty'], 400);
         }
 
-        $total = $cartItems->sum(function ($cartItem) {
-            return $cartItem->quantity * $cartItem->product->price;
+        // Calculate total based on CartItems
+        $total = $cart->items->sum(function ($item) {
+            return $item->quantity * $item->price;
         });
 
+        // Create Order
         $order = Order::create([
-            'user_id' => Auth::id(),
-            'total' => $total,
+            'user_id' => $userId,
+            'total_price' => $total
         ]);
 
-        foreach ($cartItems as $cartItem) {
+        // Create Order Items
+        foreach ($cart->items as $item) {
             OrderItem::create([
                 'order_id' => $order->id,
-                'product_id' => $cartItem->product_id,
-                'quantity' => $cartItem->quantity,
-                'price' => $cartItem->product->price,
+                'product_id' => $item->product_id,
+                'quantity' => $item->quantity,
+                'price' => $item->price,
+                'total_price' => $item->total_price,
             ]);
         }
 
-        Cart::where('user_id', Auth::id())->delete();
+        // Delete cart + items
+        $cart->items()->delete();
+        $cart->delete();
 
         return $order->load('orderItems.product');
     }
 
     /**
-     * Display the specified resource.
+     * Update the status of an order.
      */
-    public function show(Order $order)
+    public function updateStatus(Request $request, Order $order)
     {
-        if ($order->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        // Validate input
+        $request->validate([
+            'status' => 'required|string|in:Completed',
+        ]);
 
-        return $order->load('orderItems.product');
+        $order->status = $request->status;
+        $order->save();
+
+        return response()->json([
+            'message' => 'Order status updated successfully',
+            'order' => $order->load('orderItems.product')
+        ]);
     }
 }

@@ -4,88 +4,101 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Cart;
+use App\Models\CartItem;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 
 class CartController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
+    // Get the cart for a specific user
+    public function index($user_id)
     {
-        return Cart::with('product')->where('user_id', Auth::id())->get();
+        $cart = Cart::with('items.product')->firstOrCreate(['user_id' => $user_id]);
+        return response()->json($cart);
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
+    // Add a product to a user's cart
     public function store(Request $request)
     {
         $request->validate([
+            'user_id' => 'required|exists:users,id',
             'product_id' => 'required|exists:products,id',
             'quantity' => 'required|integer|min:1',
+            'price' => 'required|numeric',
         ]);
 
-        $cartItem = Cart::where('user_id', Auth::id())
+        $userId = $request->user_id;
+
+        $cart = Cart::firstOrCreate(['user_id' => $userId]);
+
+        $cartItem = CartItem::where('cart_id', $cart->id)
             ->where('product_id', $request->product_id)
             ->first();
 
+        $totalPrice = $request->price * $request->quantity;
+
         if ($cartItem) {
             $cartItem->quantity += $request->quantity;
+            $cartItem->total_price += $totalPrice;
             $cartItem->save();
         } else {
-            $cartItem = Cart::create([
-                'user_id' => Auth::id(),
+            $cartItem = CartItem::create([
+                'cart_id' => $cart->id,
                 'product_id' => $request->product_id,
                 'quantity' => $request->quantity,
+                'price' => $request->price,
+                'total_price' => $totalPrice,
             ]);
         }
 
-        return $cartItem;
+        // Update cart total
+        $cart->total_price = $cart->items()->sum('total_price');
+        $cart->save();
+
+        return response()->json($cart->load('items.product'));
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(Cart $cart)
+    // Show a user's cart
+    public function show($user_id)
     {
-        if ($cart->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+        $cart = Cart::with('items.product')->where('user_id', $user_id)->first();
+
+        if (!$cart) {
+            return response()->json(['message' => 'Cart is empty'], 404);
         }
-        return $cart->load('product');
+
+        return response()->json($cart);
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, Cart $cart)
+    // Update cart item quantity
+    public function update(Request $request, $id)
     {
-        if ($cart->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-
         $request->validate([
             'quantity' => 'required|integer|min:1',
         ]);
 
-        $cart->quantity = $request->quantity;
+        $cartItem = CartItem::findOrFail($id);
+
+        $cartItem->quantity = $request->quantity;
+        $cartItem->total_price = $cartItem->price * $request->quantity;
+        $cartItem->save();
+
+        $cart = $cartItem->cart;
+        $cart->total_price = $cart->items()->sum('total_price');
         $cart->save();
 
-        return $cart;
+        return response()->json($cart->load('items.product'));
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Cart $cart)
+    // Remove a cart item
+    public function destroy($id)
     {
-        if ($cart->user_id !== Auth::id()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        $cartItem = CartItem::findOrFail($id);
+        $cart = $cartItem->cart;
+        $cartItem->delete();
 
-        $cart->delete();
+        $cart->total_price = $cart->items()->sum('total_price');
+        $cart->save();
 
-        return response()->noContent();
+        return response()->json($cart->load('items.product'));
     }
 }
