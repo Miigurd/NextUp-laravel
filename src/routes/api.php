@@ -26,7 +26,6 @@ Route::get('/orders', [OrderController::class, 'allOrders']);
 Route::get('/orders/{user_id}', [OrderController::class, 'index']);
 Route::post('/orders', [OrderController::class, 'store']);
 Route::patch('/orders/{order}/status', [OrderController::class, 'updateStatus']);
-Route::get('/orders/recent', [OrderController::class, 'recentOrders']);
 
 Route::apiResource('products', ProductController::class);
 
